@@ -1,5 +1,5 @@
 // !!! DO NOT EDIT - THIS IS AN AUTO-GENERATED FILE !!!
-// Created by amalgamation.sh on Wed 20 Jul 2022 16:25:25 EDT
+// Created by amalgamation.sh on Thu Oct 27 11:29:50 AM MDT 2022
 
 /*
  * The CRoaring project is under a dual license (Apache/MIT).
@@ -49,7 +49,7 @@
  * CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
  * OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
  * IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
- * DEALINGS IN THE SOFTWARE
+ * DEALINGS IN THE SOFTWARE.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -64,7 +64,7 @@ A C++ header for Roaring Bitmaps.
 #ifndef INCLUDE_ROARING_HH_
 #define INCLUDE_ROARING_HH_
 
-#include <stdarg.h>
+#include <cstdarg>
 
 #include <algorithm>
 #include <new>
@@ -116,7 +116,7 @@ public:
      * Construct a bitmap from a list of integer values.
      */
     Roaring(size_t n, const uint32_t *data) : Roaring() {
-        api::roaring_bitmap_add_many(&roaring, n, data);
+        api::roaring_bitmap_add_many(&roaring, n, data, false);
     }
 
     /**
@@ -135,7 +135,7 @@ public:
      * Move constructor. The moved object remains valid, i.e.
      * all methods can still be called on it.
      */
-    explicit Roaring(Roaring &&r) noexcept : roaring(r.roaring) {
+    Roaring(Roaring &&r) noexcept : roaring(r.roaring) {
         //
         // !!! This clones the bits of the roaring structure to a new location
         // and then overwrites the old bits...assuming that this will still
@@ -185,17 +185,24 @@ public:
     }
 
     /**
-     * Add all values from x (included) to y (excluded)
+     * Add all values in range [min, max)
      */
-    void addRange(const uint64_t x, const uint64_t y)  {
-        return api::roaring_bitmap_add_range(&roaring, x, y);
+    void addRange(const uint64_t min, const uint64_t max)  {
+        return api::roaring_bitmap_add_range(&roaring, min, max);
+    }
+
+    /**
+     * Add all values in range [min, max]
+     */
+    void addRangeClosed(const uint32_t min, const uint32_t max)  {
+        return api::roaring_bitmap_add_range_closed(&roaring, min, max);
     }
 
     /**
      * Add value n_args from pointer vals
      */
     void addMany(size_t n_args, const uint32_t *vals) {
-        api::roaring_bitmap_add_many(&roaring, n_args, vals);
+        api::roaring_bitmap_add_many(&roaring, n_args, vals, false);
     }
 
     /**
@@ -210,6 +217,20 @@ public:
      */
     bool removeChecked(uint32_t x) {
         return api::roaring_bitmap_remove_checked(&roaring, x);
+    }
+
+    /**
+     * Remove all values in range [min, max)
+     */
+    void removeRange(uint64_t min, uint64_t max) {
+        return api::roaring_bitmap_remove_range(&roaring, min, max);
+    }
+
+    /**
+     * Remove all values in range [min, max]
+     */
+    void removeRangeClosed(uint32_t min, uint32_t max) {
+        return api::roaring_bitmap_remove_range_closed(&roaring, min, max);
     }
 
     /**
@@ -383,6 +404,7 @@ public:
 
     /**
      * Compute the negation of the roaring bitmap within a specified interval.
+     * interval: [range_start, range_end).
      * Areas outside the range are passed through unchanged.
      */
     void flip(uint64_t range_start, uint64_t range_end) {
@@ -824,8 +846,8 @@ public:
         return i.current_value != *o || i.has_value != o.i.has_value;
     }
 
-    RoaringSetBitForwardIterator(const Roaring &parent,
-                                 bool exhausted = false) {
+    explicit RoaringSetBitForwardIterator(const Roaring &parent,
+                                          bool exhausted = false) {
         if (exhausted) {
             i.parent = &parent.roaring;
             i.container_index = INT32_MAX;
@@ -872,9 +894,10 @@ A C++ header for 64-bit Roaring Bitmaps, implemented by way of a map of many
 #include <string>
 #include <utility>
 
-using roaring::Roaring;
 
 namespace roaring {
+
+using roaring::Roaring;
 
 class Roaring64MapSetBitForwardIterator;
 class Roaring64MapSetBitBiDirectionalIterator;
@@ -904,30 +927,32 @@ public:
     explicit Roaring64Map(const Roaring &r) { emplaceOrInsert(0, r); }
 
     /**
+     * Construct a 64-bit map from a 32-bit rvalue
+     */
+    explicit Roaring64Map(Roaring &&r) { emplaceOrInsert(0, std::move(r)); }
+
+    /**
      * Construct a roaring object from the C struct.
      *
      * Passing a NULL point is unsafe.
      */
     explicit Roaring64Map(roaring_bitmap_t *s) {
-        Roaring r(s);
-        emplaceOrInsert(0, r);
+        emplaceOrInsert(0, Roaring(s));
     }
 
-    Roaring64Map(const Roaring64Map& r)
-        : roarings(r.roarings),
-          copyOnWrite(r.copyOnWrite) { }
+    Roaring64Map(const Roaring64Map& r) = default;
 
-    Roaring64Map(Roaring64Map&& r)
-        : roarings(r.roarings),
-          copyOnWrite(r.copyOnWrite) { }
+    Roaring64Map(Roaring64Map&& r) noexcept = default;
 
     /**
-     * Assignment operator.
+     * Copy assignment operator.
      */
-    Roaring64Map &operator=(const Roaring64Map &r) {
-        roarings = r.roarings;
-        return *this;
-    }
+    Roaring64Map &operator=(const Roaring64Map &r) = default;
+
+    /**
+     * Move assignment operator.
+     */
+     Roaring64Map &operator=(Roaring64Map &&r) noexcept = default;
 
     /**
      * Construct a bitmap from a list of integer values.
@@ -971,14 +996,60 @@ public:
     }
 
     /**
+     * Add all values in range [min, max)
+     */
+    void addRange(uint64_t min, uint64_t max) {
+        if (min >= max) {
+            return;
+        }
+        addRangeClosed(min, max - 1);
+    }
+
+    /**
+     * Add all values in range [min, max]
+     */
+    void addRangeClosed(uint32_t min, uint32_t max) {
+        roarings[0].addRangeClosed(min, max);
+    }
+    void addRangeClosed(uint64_t min, uint64_t max) {
+        if (min > max) {
+            return;
+        }
+        uint32_t start_high = highBytes(min);
+        uint32_t start_low = lowBytes(min);
+        uint32_t end_high = highBytes(max);
+        uint32_t end_low = lowBytes(max);
+        if (start_high == end_high) {
+            roarings[start_high].addRangeClosed(start_low, end_low);
+            roarings[start_high].setCopyOnWrite(copyOnWrite);
+            return;
+        }
+        // we put std::numeric_limits<>::max/min in parenthesis to avoid a clash
+        // with the Windows.h header under Windows
+        roarings[start_high].addRangeClosed(
+            start_low, (std::numeric_limits<uint32_t>::max)());
+        roarings[start_high].setCopyOnWrite(copyOnWrite);
+        start_high++;
+        for (; start_high < end_high; ++start_high) {
+            roarings[start_high].addRangeClosed(
+                (std::numeric_limits<uint32_t>::min)(),
+                (std::numeric_limits<uint32_t>::max)());
+            roarings[start_high].setCopyOnWrite(copyOnWrite);
+        }
+        roarings[end_high].addRangeClosed(
+            (std::numeric_limits<uint32_t>::min)(), end_low);
+        roarings[end_high].setCopyOnWrite(copyOnWrite);
+    }
+
+    /**
      * Add value n_args from pointer vals
      */
     void addMany(size_t n_args, const uint32_t *vals) {
-        for (size_t lcv = 0; lcv < n_args; lcv++) {
-            roarings[0].add(vals[lcv]);
-            roarings[0].setCopyOnWrite(copyOnWrite);
-        }
+        Roaring &roaring = roarings[0];
+        roaring.addMany(n_args, vals);
+        roaring.setCopyOnWrite(copyOnWrite);
     }
+
     void addMany(size_t n_args, const uint64_t *vals) {
         for (size_t lcv = 0; lcv < n_args; lcv++) {
             roarings[highBytes(vals[lcv])].add(lowBytes(vals[lcv]));
@@ -1011,6 +1082,58 @@ public:
     }
 
     /**
+     * Remove all values in range [min, max)
+     */
+    void removeRange(uint64_t min, uint64_t max) {
+        if (min >= max) {
+            return;
+        }
+        return removeRangeClosed(min, max - 1);
+    }
+
+    /**
+     * Remove all values in range [min, max]
+     */
+    void removeRangeClosed(uint32_t min, uint32_t max) {
+        return roarings[0].removeRangeClosed(min, max);
+    }
+    void removeRangeClosed(uint64_t min, uint64_t max) {
+        if (min > max) {
+            return;
+        }
+        uint32_t start_high = highBytes(min);
+        uint32_t start_low = lowBytes(min);
+        uint32_t end_high = highBytes(max);
+        uint32_t end_low = lowBytes(max);
+
+        if (roarings.empty() || end_high < roarings.cbegin()->first ||
+            start_high > (roarings.crbegin())->first) {
+            return;
+        }
+
+        auto start_iter = roarings.lower_bound(start_high);
+        auto end_iter = roarings.lower_bound(end_high);
+        if (start_iter->first == start_high) {
+            if (start_iter == end_iter) {
+                start_iter->second.removeRangeClosed(start_low, end_low);
+                return;
+            }
+            // we put std::numeric_limits<>::max/min in parenthesis
+            // to avoid a clash with the Windows.h header under Windows
+            start_iter->second.removeRangeClosed(
+                start_low, (std::numeric_limits<uint32_t>::max)());
+            start_iter++;
+        }
+
+        roarings.erase(start_iter, end_iter);
+
+        if (end_iter != roarings.cend() && end_iter->first == end_high) {
+            end_iter->second.removeRangeClosed(
+                (std::numeric_limits<uint32_t>::min)(), end_low);
+        }
+    }
+
+    /**
      * Clear the bitmap
      */
     void clear() {
@@ -1028,7 +1151,7 @@ public:
                                   roaring_iter->second.maximum());
             }
         }
-        // we put std::numeric_limits<>::max/min in parenthesis
+        // we put std::numeric_limits<>::max/min in parentheses
         // to avoid a clash with the Windows.h header under Windows
         return (std::numeric_limits<uint64_t>::min)();
     }
@@ -1044,7 +1167,7 @@ public:
                                   roaring_iter->second.minimum());
             }
         }
-        // we put std::numeric_limits<>::max/min in parenthesis
+        // we put std::numeric_limits<>::max/min in parentheses
         // to avoid a clash with the Windows.h header under Windows
         return (std::numeric_limits<uint64_t>::max)();
     }
@@ -1168,7 +1291,7 @@ public:
     bool isFull() const {
         // only bother to check if map is fully saturated
         //
-        // we put std::numeric_limits<>::max/min in parenthesis
+        // we put std::numeric_limits<>::max/min in parentheses
         // to avoid a clash with the Windows.h header under Windows
         return roarings.size() ==
             ((uint64_t)(std::numeric_limits<uint32_t>::max)()) + 1
@@ -1190,6 +1313,9 @@ public:
      */
     bool isSubset(const Roaring64Map &r) const {
         for (const auto &map_entry : roarings) {
+            if (map_entry.second.isEmpty()) {
+                continue;
+            }
             auto roaring_iter = r.roarings.find(map_entry.first);
             if (roaring_iter == r.roarings.cend())
                 return false;
@@ -1276,6 +1402,9 @@ public:
      * areas outside the range are passed through unchanged.
      */
     void flip(uint64_t range_start, uint64_t range_end) {
+        if (range_start >= range_end) {
+          return;
+        }
         uint32_t start_high = highBytes(range_start);
         uint32_t start_low = lowBytes(range_start);
         uint32_t end_high = highBytes(range_end);
@@ -1285,15 +1414,17 @@ public:
             roarings[start_high].flip(start_low, end_low);
             return;
         }
-        // we put std::numeric_limits<>::max/min in parenthesis
+        // we put std::numeric_limits<>::max/min in parentheses
         // to avoid a clash with the Windows.h header under Windows
-        roarings[start_high].flip(start_low,
-                                  (std::numeric_limits<uint32_t>::max)());
+        // flip operates on the range [lower_bound, upper_bound)
+        const uint64_t max_upper_bound =
+            static_cast<uint64_t>((std::numeric_limits<uint32_t>::max)()) + 1;
+        roarings[start_high].flip(start_low, max_upper_bound);
         roarings[start_high++].setCopyOnWrite(copyOnWrite);
 
         for (; start_high <= highBytes(range_end) - 1; ++start_high) {
             roarings[start_high].flip((std::numeric_limits<uint32_t>::min)(),
-                                      (std::numeric_limits<uint32_t>::max)());
+                                      max_upper_bound);
             roarings[start_high].setCopyOnWrite(copyOnWrite);
         }
 
@@ -1482,19 +1613,17 @@ public:
      * space compared to the portable format (e.g., for very sparse bitmaps).
      */
     static Roaring64Map readSafe(const char *buf, size_t maxbytes) {
+        if (maxbytes < sizeof(uint64_t)) {
+            ROARING_TERMINATE("ran out of bytes");
+        }
         Roaring64Map result;
-        // get map size
         uint64_t map_size;
         std::memcpy(&map_size, buf, sizeof(uint64_t));
         buf += sizeof(uint64_t);
+        maxbytes -= sizeof(uint64_t);
         for (uint64_t lcv = 0; lcv < map_size; lcv++) {
-            // get map key
             if(maxbytes < sizeof(uint32_t)) {
-#if ROARING_EXCEPTIONS
-                throw std::runtime_error("ran out of bytes");
-#else
                 ROARING_TERMINATE("ran out of bytes");
-#endif
             }
             uint32_t key;
             std::memcpy(&key, buf, sizeof(uint32_t));
@@ -1819,7 +1948,7 @@ private:
 #if defined(__GLIBCXX__) && __GLIBCXX__ < 20130322
         roarings.insert(std::make_pair(key, std::move(value)));
 #else
-        roarings.emplace(key, value);
+        roarings.emplace(key, std::move(value));
 #endif
     }
 };
