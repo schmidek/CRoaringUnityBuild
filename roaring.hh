@@ -1,5 +1,5 @@
 // !!! DO NOT EDIT - THIS IS AN AUTO-GENERATED FILE !!!
-// Created by amalgamation.sh on Thu Oct 27 11:29:50 AM MDT 2022
+// Created by amalgamation.sh on Fri Nov  4 03:18:24 PM MDT 2022
 
 /*
  * The CRoaring project is under a dual license (Apache/MIT).

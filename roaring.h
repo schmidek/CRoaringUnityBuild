@@ -1,5 +1,5 @@
 // !!! DO NOT EDIT - THIS IS AN AUTO-GENERATED FILE !!!
-// Created by amalgamation.sh on Thu Oct 27 11:29:50 AM MDT 2022
+// Created by amalgamation.sh on Fri Nov  4 03:18:24 PM MDT 2022
 
 /*
  * The CRoaring project is under a dual license (Apache/MIT).
@@ -484,6 +484,8 @@ void roaring_bitmap_add_many(roaring_bitmap_t *r, size_t n_args,
  * Add value x
  */
 void roaring_bitmap_add(roaring_bitmap_t *r, uint32_t x);
+
+void roaring_bitmap_lazy_add(roaring_bitmap_t *r, uint32_t x);
 
 /**
  * Add value x
