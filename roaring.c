@@ -1,5 +1,5 @@
 // !!! DO NOT EDIT - THIS IS AN AUTO-GENERATED FILE !!!
-// Created by amalgamation.sh on Fri Nov  4 03:18:24 PM MDT 2022
+// Created by amalgamation.sh on Mon Nov  7 02:52:11 PM MST 2022
 
 /*
  * The CRoaring project is under a dual license (Apache/MIT).
@@ -15837,22 +15837,79 @@ void roaring_bitmap_add(roaring_bitmap_t *r, uint32_t val) {
 }
 
 static inline void lazy_bitset_container_set(bitset_container_t *bitset, uint16_t pos) {
-    const uint64_t old_word = bitset->words[pos >> 6];
     const int index = pos & 63;
-    const uint64_t new_word = old_word | (UINT64_C(1) << index);
-    bitset->words[pos >> 6] = new_word;
+    bitset->words[pos >> 6] |= (UINT64_C(1) << index);
+}
+
+void convert_to_dense_containers(roaring_array_t *ra) {
+    // find max key
+    uint16_t max = 0;
+    for(int i = 0; i < ra->size; i++){
+        uint16_t key = ra->keys[i];
+        if (key > max){
+            max = key;
+        }
+    }
+    int new_size = max+1;
+    if (new_size == ra->size) return;
+
+    // save old and allocate room for max
+    int32_t old_size = ra->size;
+    container_t **old_containers = ra->containers;
+    uint16_t *old_keys = ra->keys;
+    uint8_t *old_typecodes = ra->typecodes;
+    const size_t memoryneeded = new_size * (
+                                                   sizeof(uint16_t) + sizeof(container_t *) + sizeof(uint8_t));
+    void *bigalloc = roaring_malloc(memoryneeded);
+    ra->containers = (container_t **)bigalloc;
+    ra->keys = (uint16_t *)(ra->containers + new_size);
+    ra->typecodes = (uint8_t *)(ra->keys + new_size);
+    ra->allocation_size = new_size;
+    ra->size = new_size;
+
+    // now set everything
+    int32_t current = 0;
+    for(int i = 0; i < old_size; i++){
+        uint16_t key = old_keys[i];
+        for(; current < key; current++){
+            ra->keys[current] = current;
+            ra->typecodes[current] = ARRAY_CONTAINER_TYPE;
+            ra->containers[current] = 0;
+        }
+        ra->keys[current] = key;
+        ra->typecodes[current] = old_typecodes[i];
+        ra->containers[current] = old_containers[i];
+        current++;
+    }
+    roaring_free(old_containers);
+}
+
+bool is_dense(roaring_array_t *ra) {
+    return ra->size > 64;
 }
 
 void roaring_bitmap_lazy_add(roaring_bitmap_t *r, uint32_t val) {
     roaring_array_t *ra = &r->high_low_container;
 
     const uint16_t hb = val >> 16;
-    const int i = ra_get_index(ra, hb);
+    int i;
+    if (is_dense(ra)) {
+        for(int ni = ra->size; ni <= hb; ni++){
+            ra_insert_new_key_value_at(ra, ni, ni, 0, ARRAY_CONTAINER_TYPE);
+        }
+        i = hb;
+    }else{
+        i = ra_get_index(ra, hb);
+    }
     uint8_t typecode;
     uint32_t lb = val & 0xFFFF;
     if (i >= 0) {
         ra_unshare_container_at_index(&r->high_low_container, i);
         container_t *c = ra_get_container_at_index(ra, i, &typecode);
+        if (c == NULL){ // lazy creation
+            c = array_container_create_given_capacity(0);
+            ra->containers[i] = c;
+        }
         switch (typecode) {
             case BITSET_CONTAINER_TYPE:
                 lazy_bitset_container_set(CAST_bitset(c), lb);
@@ -15877,17 +15934,15 @@ void roaring_bitmap_lazy_add(roaring_bitmap_t *r, uint32_t val) {
                 __builtin_unreachable();
         }
     } else {
-        /*bitset_container_t *newbs = bitset_container_create();
-        newbs->cardinality = BITSET_UNKNOWN_CARDINALITY;
-        lazy_bitset_container_set(newbs, lb);
-        ra_insert_new_key_value_at(&r->high_low_container, -i - 1, hb,
-                                   newbs, BITSET_CONTAINER_TYPE);*/
         array_container_t *newac = array_container_create_given_capacity(4);
         container_t *container = container_add(newac, lb,
                                                ARRAY_CONTAINER_TYPE, &typecode);
         // we could just assume that it stays an array container
         ra_insert_new_key_value_at(&r->high_low_container, -i - 1, hb,
                                    container, typecode);
+        if (is_dense(ra)) {
+            convert_to_dense_containers(ra);
+        }
     }
 }
 
@@ -17792,6 +17847,7 @@ roaring_bitmap_t *roaring_bitmap_lazy_or(const roaring_bitmap_t *x1,
 void roaring_bitmap_lazy_or_inplace(roaring_bitmap_t *x1,
                                     const roaring_bitmap_t *x2,
                                     const bool bitsetconversion) {
+    bool x1_dense = is_dense(&x1->high_low_container);
     uint8_t result_type = 0;
     int length1 = x1->high_low_container.size;
     const int length2 = x2->high_low_container.size;
@@ -17810,7 +17866,18 @@ void roaring_bitmap_lazy_or_inplace(roaring_bitmap_t *x1,
         if (s1 == s2) {
             container_t *c1 = ra_get_container_at_index(
                                     &x1->high_low_container, pos1, &type1);
-            if (!container_is_full(c1, type1)) {
+            if (c1 == NULL){
+                container_t *c2 = ra_get_container_at_index(
+                    &x2->high_low_container, pos2, &type2);
+                // container_t *c2_clone = container_clone(c2, type2);
+                c2 = get_copy_of_container(c2, &type2, is_cow(x2));
+                if (is_cow(x2)) {
+                    ra_set_container_at_index(&x2->high_low_container, pos2, c2,
+                                              type2);
+                }
+                ra_set_container_at_index(&x1->high_low_container, pos1, c2,
+                                          result_type);
+            }else if (!container_is_full(c1, type1)) {
                 if ((bitsetconversion == false) ||
                     (get_container_type(c1, type1) == BITSET_CONTAINER_TYPE)
                 ){
@@ -17869,8 +17936,33 @@ void roaring_bitmap_lazy_or_inplace(roaring_bitmap_t *x1,
         }
     }
     if (pos1 == length1) {
-        ra_append_copy_range(&x1->high_low_container, &x2->high_low_container,
-                             pos2, length2, is_cow(x2));
+        if (x1_dense){
+            for(; pos2 < length2; pos2++){
+                s2 = ra_get_key_at_index(&x2->high_low_container, pos2);
+                for(; pos1 < s2; pos1++){
+                    ra_insert_new_key_value_at(&x1->high_low_container, pos1, pos1, 0, ARRAY_CONTAINER_TYPE);
+                }
+                container_t *c2 = ra_get_container_at_index(
+                    &x2->high_low_container, pos2, &type2);
+                // container_t *c2_clone = container_clone(c2, type2);
+                c2 = get_copy_of_container(c2, &type2, is_cow(x2));
+                if (is_cow(x2)) {
+                    ra_set_container_at_index(&x2->high_low_container, pos2, c2,
+                                              type2);
+                }
+                ra_insert_new_key_value_at(&x1->high_low_container, pos1, s2, c2,
+                                           type2);
+                pos1++;
+            }
+        }else {
+            ra_append_copy_range(&x1->high_low_container,
+                                 &x2->high_low_container, pos2, length2,
+                                 is_cow(x2));
+        }
+    }
+    // Check if we need to convert to dense
+    if (!x1_dense && is_dense(&x1->high_low_container)){
+        convert_to_dense_containers(&x1->high_low_container);
     }
 }
 
@@ -18038,15 +18130,20 @@ void roaring_bitmap_lazy_xor_inplace(roaring_bitmap_t *x1,
 
 void roaring_bitmap_repair_after_lazy(roaring_bitmap_t *r) {
     roaring_array_t *ra = &r->high_low_container;
-
-    for (int i = 0; i < ra->size; ++i) {
+    int32_t old_size = ra->size;
+    int current = 0;
+    for (int i = 0; i < old_size; ++i) {
         const uint8_t old_type = ra->typecodes[i];
         container_t *old_c = ra->containers[i];
+        if (old_c == NULL) continue;
         uint8_t new_type = old_type;
         container_t *new_c = container_repair_after_lazy(old_c, &new_type);
-        ra->containers[i] = new_c;
-        ra->typecodes[i] = new_type;
+        ra->containers[current] = new_c;
+        ra->typecodes[current] = new_type;
+        ra->keys[current] = ra->keys[i];
+        current++;
     }
+    ra->size = current;
 }
 
 
