@@ -1,5 +1,5 @@
 // !!! DO NOT EDIT - THIS IS AN AUTO-GENERATED FILE !!!
-// Created by amalgamation.sh on Mon Nov  7 02:52:11 PM MST 2022
+// Created by amalgamation.sh on Mon Nov  7 03:25:29 PM MST 2022
 
 /*
  * The CRoaring project is under a dual license (Apache/MIT).
@@ -15907,7 +15907,7 @@ void roaring_bitmap_lazy_add(roaring_bitmap_t *r, uint32_t val) {
         ra_unshare_container_at_index(&r->high_low_container, i);
         container_t *c = ra_get_container_at_index(ra, i, &typecode);
         if (c == NULL){ // lazy creation
-            c = array_container_create_given_capacity(0);
+            c = array_container_create_given_capacity(4);
             ra->containers[i] = c;
         }
         switch (typecode) {
@@ -17856,6 +17856,9 @@ void roaring_bitmap_lazy_or_inplace(roaring_bitmap_t *x1,
 
     if (0 == length1) {
         roaring_bitmap_overwrite(x1, x2);
+        if (is_dense(&x1->high_low_container)){
+            convert_to_dense_containers(&x1->high_low_container);
+        }
         return;
     }
     int pos1 = 0, pos2 = 0;
