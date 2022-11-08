@@ -1,5 +1,5 @@
 // !!! DO NOT EDIT - THIS IS AN AUTO-GENERATED FILE !!!
-// Created by amalgamation.sh on Mon Nov  7 03:25:29 PM MST 2022
+// Created by amalgamation.sh on Mon Nov  7 05:37:19 PM MST 2022
 
 /*
  * The CRoaring project is under a dual license (Apache/MIT).
@@ -4439,6 +4439,7 @@ static inline int container_get_cardinality(
     const container_t *c, uint8_t typecode
 ){
     c = container_unwrap_shared(c, &typecode);
+    if (c == NULL) return 0;
     switch (typecode) {
         case BITSET_CONTAINER_TYPE:
             return bitset_container_cardinality(const_CAST_bitset(c));
@@ -11654,6 +11655,8 @@ extern inline container_t *container_iandnot(
         uint8_t *result_type);
 
 void container_free(container_t *c, uint8_t type) {
+    if (c == NULL)
+        return;
     switch (type) {
         case BITSET_CONTAINER_TYPE:
             bitset_container_free(CAST_bitset(c));
@@ -15881,6 +15884,7 @@ void convert_to_dense_containers(roaring_array_t *ra) {
         ra->containers[current] = old_containers[i];
         current++;
     }
+    assert(current == new_size);
     roaring_free(old_containers);
 }
 
@@ -17879,7 +17883,7 @@ void roaring_bitmap_lazy_or_inplace(roaring_bitmap_t *x1,
                                               type2);
                 }
                 ra_set_container_at_index(&x1->high_low_container, pos1, c2,
-                                          result_type);
+                                          type2);
             }else if (!container_is_full(c1, type1)) {
                 if ((bitsetconversion == false) ||
                     (get_container_type(c1, type1) == BITSET_CONTAINER_TYPE)
