@@ -1,5 +1,5 @@
 // !!! DO NOT EDIT - THIS IS AN AUTO-GENERATED FILE !!!
-// Created by amalgamation.sh on Fri Feb 24 10:56:21 AM MST 2023
+// Created by amalgamation.sh on Fri Feb 24 11:16:27 AM MST 2023
 
 /*
  * The CRoaring project is under a dual license (Apache/MIT).
@@ -6192,8 +6192,11 @@ static inline container_t *container_iandnot(
             return result;
 
         case CONTAINER_PAIR(BITSET,ARRAY):
+            if (CAST_bitset(c1)->cardinality == BITSET_UNKNOWN_CARDINALITY){
+                CAST_bitset(c1)->cardinality = bitset_container_compute_cardinality(CAST_bitset(c1));
+            }
             *result_type = bitset_array_container_iandnot(
-                                CAST_bitset(c1),
+                               CAST_bitset(c1),
                                 const_CAST_array(c2), &result)
                                     ? BITSET_CONTAINER_TYPE
                                     : ARRAY_CONTAINER_TYPE;
