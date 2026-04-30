@@ -1,5 +1,5 @@
 // !!! DO NOT EDIT - THIS IS AN AUTO-GENERATED FILE !!!
-// Created by amalgamation.sh on Fri Feb 24 11:16:27 AM MST 2023
+// Created by amalgamation.sh on Fri May  1 08:16:45 PM MDT 2026
 
 /*
  * The CRoaring project is under a dual license (Apache/MIT).
@@ -295,6 +295,10 @@ bool roaring_bitmap_overwrite(roaring_bitmap_t *dest,
  * Print the content of the bitmap.
  */
 void roaring_bitmap_printf(const roaring_bitmap_t *r);
+
+roaring_bitmap_t *roaring_bitmap_container_bitmap(const roaring_bitmap_t *r);
+
+roaring_bitmap_t *roaring_bitmap_lazy_container_bitmap(const roaring_bitmap_t *r);
 
 /**
  * Computes the intersection between two bitmaps and returns new bitmap. The
