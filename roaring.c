@@ -1,5 +1,5 @@
 // !!! DO NOT EDIT - THIS IS AN AUTO-GENERATED FILE !!!
-// Created by amalgamation.sh on Fri May  1 08:16:45 PM MDT 2026
+// Created by amalgamation.sh on Sat May  2 09:49:15 AM MDT 2026
 
 /*
  * The CRoaring project is under a dual license (Apache/MIT).
@@ -18677,6 +18677,23 @@ bool roaring_bitmap_contains(const roaring_bitmap_t *r, uint32_t val) {
     // next call ought to be cheap
     container_t *container =
         ra_get_container_at_index(&r->high_low_container, i, &typecode);
+    // rest might be a tad expensive, possibly involving another round of binary search
+    return container_contains(container, val & 0xFFFF, typecode);
+}
+
+bool roaring_bitmap_lazy_contains(const roaring_bitmap_t *r, uint32_t val) {
+    const uint16_t hb = val >> 16;
+    /*
+     * the next function call involves a binary search and lots of branching.
+     */
+    int32_t i = ra_get_index(&r->high_low_container, hb);
+    if (i < 0) return false;
+
+    uint8_t typecode;
+    // next call ought to be cheap
+    container_t *container =
+        ra_get_container_at_index(&r->high_low_container, i, &typecode);
+    if (container == NULL) return false;
     // rest might be a tad expensive, possibly involving another round of binary search
     return container_contains(container, val & 0xFFFF, typecode);
 }
