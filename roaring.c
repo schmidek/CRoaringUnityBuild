@@ -1,5 +1,5 @@
 // !!! DO NOT EDIT - THIS IS AN AUTO-GENERATED FILE !!!
-// Created by amalgamation.sh on Sat May  2 09:49:15 AM MDT 2026
+// Created by amalgamation.sh on Thu May  7 03:50:06 PM MDT 2026
 
 /*
  * The CRoaring project is under a dual license (Apache/MIT).
@@ -6928,6 +6928,10 @@ size_t ra_portable_serialize(const roaring_array_t *ra, char *buf);
  */
 bool ra_portable_deserialize(roaring_array_t *ra, const char *buf, const size_t maxbytes, size_t * readbytes);
 
+bool ra_portable_deserialize_with_container_bitmap(roaring_array_t *ra, const char *buf,
+                                                   const size_t maxbytes, size_t * readbytes,
+                                                   const roaring_bitmap_t *container_bitmap);
+
 /**
  * Quickly checks whether there is a serialized bitmap at the pointer,
  * not exceeding size "maxbytes" in bytes. This function does not allocate
@@ -7003,6 +7007,18 @@ void ra_copy_range(roaring_array_t *ra, uint32_t begin, uint32_t end,
  * Caller is responsible for that.
  */
 void ra_shift_tail(roaring_array_t *ra, int32_t count, int32_t distance);
+
+static inline uint32_t minimum_uint32(uint32_t a, uint32_t b) {
+    return (a < b) ? a : b;
+}
+
+static inline uint64_t minimum_uint64(uint64_t a, uint64_t b) {
+    return (a < b) ? a : b;
+}
+
+static inline int32_t minimum_int32(int32_t a, int32_t b) {
+    return (a < b) ? a : b;
+}
 
 #ifdef __cplusplus
 }  // namespace internal
@@ -10198,6 +10214,7 @@ void bitset_flip_list(uint64_t *words, const uint16_t *list, uint64_t length) {
 #include <stdio.h>
 #include <stdlib.h>
 
+
 #ifdef __cplusplus
 extern "C" { namespace roaring { namespace internal {
 #endif
@@ -10452,10 +10469,6 @@ void array_container_xor(const array_container_t *array_1,
         xor_uint16(array_1->array, array_1->cardinality, array_2->array,
                    array_2->cardinality, out->array);
 #endif
-}
-
-static inline int32_t minimum_int32(int32_t a, int32_t b) {
-    return (a < b) ? a : b;
 }
 
 /* computes the intersection of array1 and array2 and write the result to
@@ -15566,14 +15579,6 @@ roaring_bitmap_t *roaring_bitmap_of(size_t n_args, ...) {
     return answer;
 }
 
-static inline uint32_t minimum_uint32(uint32_t a, uint32_t b) {
-    return (a < b) ? a : b;
-}
-
-static inline uint64_t minimum_uint64(uint64_t a, uint64_t b) {
-    return (a < b) ? a : b;
-}
-
 roaring_bitmap_t *roaring_bitmap_from_range(uint64_t min, uint64_t max,
                                             uint32_t step) {
     if(max >= UINT64_C(0x100000000)) {
@@ -17072,11 +17077,29 @@ roaring_bitmap_t *roaring_bitmap_portable_deserialize(const char *buf) {
     return roaring_bitmap_portable_deserialize_safe(buf, SIZE_MAX);
 }
 
-
 size_t roaring_bitmap_portable_deserialize_size(const char *buf, size_t maxbytes) {
   return ra_portable_deserialize_size(buf, maxbytes);
 }
 
+roaring_bitmap_t *roaring_bitmap_portable_deserialize_safe_with_container_bitmap(
+    const char *buf,
+    size_t maxbytes,
+    const roaring_bitmap_t *container_bitmap) {
+  roaring_bitmap_t *ans =
+      (roaring_bitmap_t *)roaring_malloc(sizeof(roaring_bitmap_t));
+  if (ans == NULL) {
+        return NULL;
+  }
+  size_t bytesread;
+  bool is_ok = ra_portable_deserialize_with_container_bitmap(&ans->high_low_container, buf, maxbytes, &bytesread, container_bitmap);
+  if(is_ok) assert(bytesread <= maxbytes);
+  roaring_bitmap_set_copy_on_write(ans, false);
+  if (!is_ok) {
+        roaring_free(ans);
+        return NULL;
+  }
+  return ans;
+}
 
 size_t roaring_bitmap_portable_serialize(const roaring_bitmap_t *r,
                                          char *buf) {
@@ -19039,11 +19062,11 @@ roaring_bitmap_frozen_view(const char *buf, size_t length) {
 /* end file src/roaring.c */
 /* begin file src/roaring_array.c */
 #include <assert.h>
+#include <inttypes.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <inttypes.h>
 
 
 #ifdef __cplusplus
@@ -19947,6 +19970,188 @@ bool ra_portable_deserialize(roaring_array_t *answer, const char *buf, const siz
             buf += array_container_read(thiscard, c, buf);
             answer->containers[k] = c;
             answer->typecodes[k] = ARRAY_CONTAINER_TYPE;
+        }
+    }
+    return true;
+}
+
+// this function populates answer from the content of buf (reading up to maxbytes bytes).
+// The function returns false if a properly serialized bitmap cannot be found.
+// if it returns true, readbytes is populated by how many bytes were read, we have that *readbytes <= maxbytes.
+bool ra_portable_deserialize_with_container_bitmap(roaring_array_t *answer, const char *buf, const size_t maxbytes, size_t * readbytes, const roaring_bitmap_t *container_bitmap) {
+    *readbytes = sizeof(int32_t);// for cookie
+    if(*readbytes > maxbytes) {
+      fprintf(stderr, "Ran out of bytes while reading first 4 bytes.\n");
+      return false;
+    }
+    uint32_t cookie;
+    memcpy(&cookie, buf, sizeof(int32_t));
+    buf += sizeof(uint32_t);
+    if ((cookie & 0xFFFF) != SERIAL_COOKIE &&
+        cookie != SERIAL_COOKIE_NO_RUNCONTAINER) {
+        fprintf(stderr, "I failed to find one of the right cookies. Found %" PRIu32 "\n",
+                cookie);
+        return false;
+    }
+    int32_t size;
+
+    if ((cookie & 0xFFFF) == SERIAL_COOKIE)
+        size = (cookie >> 16) + 1;
+    else {
+        *readbytes += sizeof(int32_t);
+        if(*readbytes > maxbytes) {
+          fprintf(stderr, "Ran out of bytes while reading second part of the cookie.\n");
+          return false;
+        }
+        memcpy(&size, buf, sizeof(int32_t));
+        buf += sizeof(uint32_t);
+    }
+    if (size < 0) {
+       fprintf(stderr, "You cannot have a negative number of containers, the data must be corrupted: %" PRId32 "\n",
+                size);
+       return false;
+    }
+    if (size > (1<<16)) {
+       fprintf(stderr, "You cannot have so many containers, the data must be corrupted: %" PRId32 "\n",
+                size);
+       return false;
+    }
+    const char *bitmapOfRunContainers = NULL;
+    bool hasrun = (cookie & 0xFFFF) == SERIAL_COOKIE;
+    if (hasrun) {
+        int32_t s = (size + 7) / 8;
+        *readbytes += s;
+        if(*readbytes > maxbytes) {
+          fprintf(stderr, "Ran out of bytes while reading run bitmap.\n");
+          return false;
+        }
+        bitmapOfRunContainers = buf;
+        buf += s;
+    }
+    uint16_t *keyscards = (uint16_t *)buf;
+
+    *readbytes += size * 2 * sizeof(uint16_t);
+    if(*readbytes > maxbytes) {
+      fprintf(stderr, "Ran out of bytes while reading key-cardinality array.\n");
+      return false;
+    }
+    buf += size * 2 * sizeof(uint16_t);
+
+    bool is_ok = ra_init_with_capacity(answer, minimum_int32(size, (int32_t) roaring_bitmap_get_cardinality(container_bitmap)));
+    if (!is_ok) {
+        fprintf(stderr, "Failed to allocate memory for roaring array. Bailing out.\n");
+        return false;
+    }
+
+    if ((!hasrun) || (size >= NO_OFFSET_THRESHOLD)) {
+        *readbytes += size * 4;
+        if(*readbytes > maxbytes) {
+          fprintf(stderr, "Ran out of bytes while reading offsets.\n");
+          ra_clear(answer);
+          return false;
+        }
+        // skipping the offsets
+        buf += size * 4;
+    }
+    // Reading the containers
+    int32_t out = 0; // index into answer arrays
+    for (int32_t k = 0; k < size; ++k) {
+        uint16_t key;
+        memcpy(&key, keyscards + 2*k, sizeof(key));
+        bool should_keep = (roaring_bitmap_contains(container_bitmap, key));
+
+        uint16_t tmp;
+        memcpy(&tmp, keyscards + 2*k+1, sizeof(tmp));
+        uint32_t thiscard = tmp + 1;
+        bool isbitmap = (thiscard > DEFAULT_MAX_SIZE);
+        bool isrun = false;
+        if(hasrun) {
+          if((bitmapOfRunContainers[k / 8] & (1 << (k % 8))) != 0) {
+            isbitmap = false;
+            isrun = true;
+          }
+        }
+        if (isbitmap) {
+            size_t containersize = BITSET_CONTAINER_SIZE_IN_WORDS * sizeof(uint64_t);
+            *readbytes += containersize;
+            if(*readbytes > maxbytes) {
+              fprintf(stderr, "Running out of bytes while reading a bitset container.\n");
+              ra_clear(answer);
+              return false;
+            }
+            if (should_keep) {
+                bitset_container_t *c = bitset_container_create();
+                if(c == NULL) {
+                  fprintf(stderr, "Failed to allocate memory for a bitset container.\n");
+                  ra_clear(answer);
+                  return false;
+                }
+                answer->keys[out] = key;
+                answer->size++;
+                buf += bitset_container_read(thiscard, c, buf);
+                answer->containers[out] = c;
+                answer->typecodes[out] = BITSET_CONTAINER_TYPE;
+                out++;
+            } else {
+                buf += containersize;
+            }
+        } else if (isrun) {
+            *readbytes += sizeof(uint16_t);
+            if(*readbytes > maxbytes) {
+              fprintf(stderr, "Running out of bytes while reading a run container (header).\n");
+              ra_clear(answer);
+              return false;
+            }
+            uint16_t n_runs;
+            memcpy(&n_runs, buf, sizeof(uint16_t));
+            size_t containersize = n_runs * sizeof(rle16_t);
+            *readbytes += containersize;
+            if(*readbytes > maxbytes) {
+              fprintf(stderr, "Running out of bytes while reading a run container.\n");
+              ra_clear(answer);
+              return false;
+            }
+            if (should_keep) {
+                run_container_t *c = run_container_create();
+                if(c == NULL) {
+                  fprintf(stderr, "Failed to allocate memory for a run container.\n");
+                  ra_clear(answer);
+                  return false;
+                }
+                answer->keys[out] = key;
+                answer->size++;
+                buf += run_container_read(thiscard, c, buf);
+                answer->containers[out] = c;
+                answer->typecodes[out] = RUN_CONTAINER_TYPE;
+                out++;
+            } else {
+                buf += sizeof(uint16_t) + containersize;
+            }
+        } else {
+            size_t containersize = thiscard * sizeof(uint16_t);
+            *readbytes += containersize;
+            if(*readbytes > maxbytes) {
+              fprintf(stderr, "Running out of bytes while reading an array container.\n");
+              ra_clear(answer);
+              return false;
+            }
+            if (should_keep) {
+                array_container_t *c =
+                    array_container_create_given_capacity(thiscard);
+                if(c == NULL) {
+                  fprintf(stderr, "Failed to allocate memory for an array container.\n");
+                  ra_clear(answer);
+                  return false;
+                }
+                answer->keys[out] = key;
+                answer->size++;
+                buf += array_container_read(thiscard, c, buf);
+                answer->containers[out] = c;
+                answer->typecodes[out] = ARRAY_CONTAINER_TYPE;
+                out++;
+            } else {
+                buf += containersize;
+            }
         }
     }
     return true;

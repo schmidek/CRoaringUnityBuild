@@ -1,5 +1,5 @@
 // !!! DO NOT EDIT - THIS IS AN AUTO-GENERATED FILE !!!
-// Created by amalgamation.sh on Sat May  2 09:49:15 AM MDT 2026
+// Created by amalgamation.sh on Thu May  7 03:50:06 PM MDT 2026
 
 /*
  * The CRoaring project is under a dual license (Apache/MIT).
@@ -701,6 +701,19 @@ roaring_bitmap_t *roaring_bitmap_portable_deserialize(const char *buf);
  */
 roaring_bitmap_t *roaring_bitmap_portable_deserialize_safe(const char *buf,
                                                            size_t maxbytes);
+
+/**
+ * Read bitmap from a serialized buffer safely (reading up to maxbytes).
+ * In case of failure, NULL is returned.
+ * Only reads container whose key is present in container_bitmap
+ *
+ * This is meant to be compatible with the Java and Go versions:
+ * https://github.com/RoaringBitmap/RoaringFormatSpec
+ */
+roaring_bitmap_t *roaring_bitmap_portable_deserialize_safe_with_container_bitmap(
+                                                           const char *buf,
+                                                           size_t maxbytes,
+                                                           const roaring_bitmap_t *container_bitmap);
 
 /**
  * Check how many bytes would be read (up to maxbytes) at this pointer if there
