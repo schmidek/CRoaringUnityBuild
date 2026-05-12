@@ -1,5 +1,5 @@
 // !!! DO NOT EDIT - THIS IS AN AUTO-GENERATED FILE !!!
-// Created by amalgamation.sh on Thu May  7 03:50:06 PM MDT 2026
+// Created by amalgamation.sh on Mon May 11 09:23:30 PM MDT 2026
 
 /*
  * The CRoaring project is under a dual license (Apache/MIT).
@@ -299,6 +299,8 @@ void roaring_bitmap_printf(const roaring_bitmap_t *r);
 roaring_bitmap_t *roaring_bitmap_container_bitmap(const roaring_bitmap_t *r);
 
 roaring_bitmap_t *roaring_bitmap_lazy_container_bitmap(const roaring_bitmap_t *r);
+
+roaring_bitmap_t *roaring_bitmap_lazy_block_max_bitmap(const roaring_bitmap_t *r, uint16_t block_size);
 
 /**
  * Computes the intersection between two bitmaps and returns new bitmap. The
@@ -714,6 +716,20 @@ roaring_bitmap_t *roaring_bitmap_portable_deserialize_safe_with_container_bitmap
                                                            const char *buf,
                                                            size_t maxbytes,
                                                            const roaring_bitmap_t *container_bitmap);
+
+/**
+ * Read bitmap from a serialized buffer safely (reading up to maxbytes).
+ * In case of failure, NULL is returned.
+ * Only reads container sub-blocks whose key is present in block_max
+ *
+ * This is meant to be compatible with the Java and Go versions:
+ * https://github.com/RoaringBitmap/RoaringFormatSpec
+ */
+roaring_bitmap_t *roaring_bitmap_portable_deserialize_safe_with_block_max(
+    const char *buf,
+    size_t maxbytes,
+    const roaring_bitmap_t *block_max,
+    uint16_t block_size);
 
 /**
  * Check how many bytes would be read (up to maxbytes) at this pointer if there
