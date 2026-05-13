@@ -1,5 +1,5 @@
 // !!! DO NOT EDIT - THIS IS AN AUTO-GENERATED FILE !!!
-// Created by amalgamation.sh on Mon May 11 09:23:30 PM MDT 2026
+// Created by amalgamation.sh on Tue May 12 07:40:05 PM MDT 2026
 
 /*
  * The CRoaring project is under a dual license (Apache/MIT).
@@ -15761,7 +15761,7 @@ roaring_bitmap_t *roaring_bitmap_lazy_container_bitmap(const roaring_bitmap_t *r
 }
 
 roaring_bitmap_t *roaring_bitmap_lazy_block_max_bitmap(const roaring_bitmap_t *r, const uint16_t block_size) {
-    assert(block_size % 64 == 0);
+    assert(block_size > 0 && (block_size & (block_size - 1)) == 0);  // power of 2
     roaring_bitmap_t *answer = roaring_bitmap_create();
     const roaring_array_t *ra = &r->high_low_container;
     for (int i = 0; i < ra->size; ++i) {
@@ -15772,12 +15772,27 @@ roaring_bitmap_t *roaring_bitmap_lazy_block_max_bitmap(const roaring_bitmap_t *r
         switch (ra->typecodes[i]) {
             case BITSET_CONTAINER_TYPE: {
                 bitset_container_t *bitset = CAST_bitset(c);
-                int words_per_block = block_size / 64;
-                for (int w = 0; w < BITSET_CONTAINER_SIZE_IN_WORDS; w += words_per_block) {
-                    for (int j = 0; j < words_per_block; j++) {
-                        if (bitset->words[w + j] != 0) {
-                            roaring_bitmap_lazy_add(answer, base_block + w / words_per_block);
-                            break;
+                if (block_size >= 64) {
+                    int words_per_block = block_size / 64;
+                    for (int w = 0; w < BITSET_CONTAINER_SIZE_IN_WORDS; w += words_per_block) {
+                        for (int j = 0; j < words_per_block; j++) {
+                            if (bitset->words[w + j] != 0) {
+                                roaring_bitmap_lazy_add(answer, base_block + w / words_per_block);
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    uint32_t blocks_per_word = 64 / block_size;
+                    uint64_t block_mask = (UINT64_C(1) << block_size) - 1;
+                    for (int w = 0; w < BITSET_CONTAINER_SIZE_IN_WORDS; w++) {
+                        uint64_t word = bitset->words[w];
+                        if (word == 0) continue;
+                        uint32_t word_base_block = base_block + (uint32_t)w * blocks_per_word;
+                        for (uint32_t b = 0; b < blocks_per_word; b++) {
+                            if ((word >> (b * block_size)) & block_mask) {
+                                roaring_bitmap_lazy_add(answer, word_base_block + b);
+                            }
                         }
                     }
                 }
@@ -20241,7 +20256,7 @@ bool ra_portable_deserialize_with_container_bitmap(roaring_array_t *answer, cons
 // The function returns false if a properly serialized bitmap cannot be found.
 // if it returns true, readbytes is populated by how many bytes were read, we have that *readbytes <= maxbytes.
 bool ra_portable_deserialize_with_block_max(roaring_array_t *answer, const char *buf, const size_t maxbytes, size_t * readbytes, const roaring_bitmap_t *block_max, const uint16_t block_size) {
-    assert(block_size % 64 == 0);
+    assert(block_size > 0 && (block_size & (block_size - 1)) == 0);  // power of 2
     uint32_t blocks_per_container = 65536 / block_size;
 
     *readbytes = sizeof(int32_t);// for cookie
@@ -20318,7 +20333,9 @@ bool ra_portable_deserialize_with_block_max(roaring_array_t *answer, const char 
         // skipping the offsets
         buf += size * 4;
     }
-    int words_per_block = block_size / 64;
+    // For block_size >= 64: words_per_block >= 1, we zero entire words
+    // For block_size < 64: multiple blocks fit in one word, we mask bits
+    int words_per_block = block_size / 64;  // 0 when block_size < 64
 
     // Reading the containers
     int32_t out = 0; // index into answer arrays
@@ -20355,10 +20372,26 @@ bool ra_portable_deserialize_with_block_max(roaring_array_t *answer, const char 
                   return false;
                 }
                 buf += bitset_container_read(thiscard, c, buf);
-                // Zero out words for blocks not in block_max
-                for (uint32_t b = 0; b < blocks_per_container; b++) {
-                    if (!roaring_bitmap_contains(block_max, base_block + b)) {
-                        memset(&c->words[b * words_per_block], 0, words_per_block * sizeof(uint64_t));
+                // Zero out bits for blocks not in block_max
+                if (words_per_block >= 1) {
+                    for (uint32_t b = 0; b < blocks_per_container; b++) {
+                        if (!roaring_bitmap_contains(block_max, base_block + b)) {
+                            memset(&c->words[b * words_per_block], 0, words_per_block * sizeof(uint64_t));
+                        }
+                    }
+                } else {
+                    // block_size < 64: multiple blocks per word
+                    uint32_t blocks_per_word = 64 / block_size;
+                    uint64_t block_mask = (block_size == 64) ? UINT64_MAX : ((UINT64_C(1) << block_size) - 1);
+                    for (uint32_t w = 0; w < BITSET_CONTAINER_SIZE_IN_WORDS; w++) {
+                        uint64_t clear_mask = 0;
+                        for (uint32_t i = 0; i < blocks_per_word; i++) {
+                            uint32_t b = w * blocks_per_word + i;
+                            if (!roaring_bitmap_contains(block_max, base_block + b)) {
+                                clear_mask |= block_mask << (i * block_size);
+                            }
+                        }
+                        c->words[w] &= ~clear_mask;
                     }
                 }
                 c->cardinality = bitset_container_compute_cardinality(c);
