@@ -1,5 +1,5 @@
 // !!! DO NOT EDIT - THIS IS AN AUTO-GENERATED FILE !!!
-// Created by amalgamation.sh on Fri Feb 24 11:16:27 AM MST 2023
+// Created by amalgamation.sh on Fri May 29 02:09:53 PM MDT 2026
 
 /*
  * The CRoaring project is under a dual license (Apache/MIT).
@@ -6937,6 +6937,15 @@ bool ra_portable_deserialize(roaring_array_t *ra, const char *buf, const size_t 
  * Otherwise, it returns how many bytes are occupied by the bitmap data.
  */
 size_t ra_portable_deserialize_size(const char *buf, const size_t maxbytes);
+
+/**
+ * Read the cardinality of a serialized bitmap (compatible with the Java and Go
+ * versions) without allocating any containers.  Reads up to maxbytes bytes from
+ * buf.  Returns true on success and writes the cardinality to *cardinality.
+ * Returns false if the buffer does not contain a valid serialized bitmap.
+ */
+bool ra_portable_deserialize_cardinality(const char *buf, const size_t maxbytes,
+                                         uint64_t *cardinality);
 
 /**
  * How many bytes are required to serialize this bitmap (meant to be
@@ -17058,6 +17067,12 @@ size_t roaring_bitmap_portable_deserialize_size(const char *buf, size_t maxbytes
   return ra_portable_deserialize_size(buf, maxbytes);
 }
 
+bool roaring_bitmap_portable_deserialize_cardinality(const char *buf,
+                                                    size_t maxbytes,
+                                                    uint64_t *cardinality) {
+  return ra_portable_deserialize_cardinality(buf, maxbytes, cardinality);
+}
+
 
 size_t roaring_bitmap_portable_serialize(const roaring_bitmap_t *r,
                                          char *buf) {
@@ -19741,6 +19756,54 @@ size_t ra_portable_deserialize_size(const char *buf, const size_t maxbytes) {
         }
     }
     return bytestotal;
+}
+
+// Reads the cardinality of a portable-serialized bitmap (reading up to maxbytes
+// bytes) without allocating any containers. Returns true on success and writes
+// the cardinality to *cardinality. Returns false if the buffer does not contain
+// a valid serialized bitmap.
+bool ra_portable_deserialize_cardinality(const char *buf, const size_t maxbytes,
+                                         uint64_t *cardinality) {
+    size_t bytestotal = sizeof(int32_t);  // for cookie
+    if (bytestotal > maxbytes) return false;
+    uint32_t cookie;
+    memcpy(&cookie, buf, sizeof(int32_t));
+    buf += sizeof(uint32_t);
+    if ((cookie & 0xFFFF) != SERIAL_COOKIE &&
+        cookie != SERIAL_COOKIE_NO_RUNCONTAINER) {
+        return false;
+    }
+    int32_t size;
+
+    if ((cookie & 0xFFFF) == SERIAL_COOKIE) {
+        size = (cookie >> 16) + 1;
+    } else {
+        bytestotal += sizeof(int32_t);
+        if (bytestotal > maxbytes) return false;
+        memcpy(&size, buf, sizeof(int32_t));
+        buf += sizeof(uint32_t);
+    }
+    if (size < 0 || size > (1 << 16)) {
+        return false;  // logically impossible
+    }
+    bool hasrun = (cookie & 0xFFFF) == SERIAL_COOKIE;
+    if (hasrun) {
+        int32_t s = (size + 7) / 8;
+        bytestotal += s;
+        if (bytestotal > maxbytes) return false;
+        buf += s;
+    }
+    bytestotal += (size_t)size * 2 * sizeof(uint16_t);
+    if (bytestotal > maxbytes) return false;
+    uint64_t card = 0;
+    for (int32_t k = 0; k < size; ++k) {
+        uint16_t tmp;
+        memcpy(&tmp, buf + 2 * sizeof(uint16_t) * k + sizeof(uint16_t),
+               sizeof(tmp));
+        card += (uint32_t)tmp + 1;
+    }
+    *cardinality = card;
+    return true;
 }
 
 
