@@ -1,5 +1,5 @@
 // !!! DO NOT EDIT - THIS IS AN AUTO-GENERATED FILE !!!
-// Created by amalgamation.sh on Tue May 12 07:40:05 PM MDT 2026
+// Created by amalgamation.sh on Tue Aug  4 01:26:35 PM MDT 2026
 
 /*
  * The CRoaring project is under a dual license (Apache/MIT).
@@ -740,6 +740,20 @@ roaring_bitmap_t *roaring_bitmap_portable_deserialize_safe_with_block_max(
  */
 size_t roaring_bitmap_portable_deserialize_size(const char *buf,
                                                 size_t maxbytes);
+
+/**
+ * Read the cardinality of a serialized bitmap without fully deserializing it.
+ * Reads up to maxbytes bytes from buf. Returns true on success and writes the
+ * cardinality to *cardinality. Returns false if the buffer does not contain a
+ * valid serialized bitmap.
+ *
+ * No containers are allocated; only the serialized header and the per-container
+ * cardinality field are inspected. This is meant to be compatible with the Java
+ * and Go versions: https://github.com/RoaringBitmap/RoaringFormatSpec
+ */
+bool roaring_bitmap_portable_deserialize_cardinality(const char *buf,
+                                                     size_t maxbytes,
+                                                     uint64_t *cardinality);
 
 /**
  * How many bytes are required to serialize this bitmap.
